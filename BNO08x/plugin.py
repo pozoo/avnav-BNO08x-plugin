@@ -1,5 +1,15 @@
 # the following import is optional
 # it only allows "intelligent" IDEs (like PyCharm) to support you in using it
+import sys
+import os
+import time
+import math
+
+# Add current directory to Python path to find bno08x module
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import bno08x
+
 from avnav_api import AVNApi
 
 PLUGIN_VERSION = 20251115
@@ -7,7 +17,13 @@ PLUGIN_VERSION = 20251115
 
 class Plugin(object):
     PATH = "gps.test"
-    PERIOD = "period"
+    INTERVAL = "interval"
+    SPI_DEVICE = "spi_device"
+    GPIOCHIP = "gpiochip"
+    INT_PIN = "int_pin"
+    RST_PIN = "rst_pin"
+    CS_PIN = "cs_pin"
+    SPI_SPEED = "spi_speed"
     ENABLE_HDM = "enable_hdm"
     ENABLE_XDR_HDM = "enable_xdr_hdm"
     ENABLE_ROLL = "enable_roll"
@@ -15,10 +31,46 @@ class Plugin(object):
 
     CONFIG = [
         {
-            "name": PERIOD,
+            "name": INTERVAL,
             "description": "reporting time interval in seconds",
             "type": "FLOAT",
             "default": 0.25,
+        },
+        {
+            "name": SPI_DEVICE,
+            "description": "SPI device path (e.g., /dev/spidev0.0)",
+            "type": "STRING",
+            "default": "/dev/spidev0.0",
+        },
+        {
+            "name": GPIOCHIP,
+            "description": "GPIO chip device (e.g., gpiochip0)",
+            "type": "STRING",
+            "default": "gpiochip0",
+        },
+        {
+            "name": INT_PIN,
+            "description": "GPIO pin number for interrupt (INT)",
+            "type": "NUMBER",
+            "default": 27,
+        },
+        {
+            "name": RST_PIN,
+            "description": "GPIO pin number for reset (RST)",
+            "type": "NUMBER",
+            "default": 22,
+        },
+        {
+            "name": CS_PIN,
+            "description": "GPIO pin number for chip select (CS), -1 uses default SPI CS pin",
+            "type": "NUMBER",
+            "default": -1,
+        },
+        {
+            "name": SPI_SPEED,
+            "description": "SPI speed in Hz",
+            "type": "NUMBER",
+            "default": 1000000,
         },
         {
             "name": ENABLE_HDM,
@@ -105,6 +157,41 @@ class Plugin(object):
             return self.api.getConfigValue(name, self.configDefaults[name])
         return self.api.getConfigValue(name)
 
+    def _setup(self):
+        self.imu = bno08x.BNO08x()
+        self.imu.enableDebugging(False)
+
+        spi_device = self.getConfigValue(self.SPI_DEVICE)
+        gpiochip = self.getConfigValue(self.GPIOCHIP)
+        int_pin = int(self.getConfigValue(self.INT_PIN))
+        rst_pin = int(self.getConfigValue(self.RST_PIN))
+        cs_pin = int(self.getConfigValue(self.CS_PIN))
+        spi_speed = int(self.getConfigValue(self.SPI_SPEED))
+
+        self.api.log(f"Opening SPI: {spi_device} cs={cs_pin} int={int_pin} rst={rst_pin} speed={spi_speed}")
+        ok = self.imu.beginSPI(int_pin, rst_pin, cs_pin, spi_speed, spi_device, gpiochip)
+        if not ok:
+            self.api.error("Failed to initialize BNO08x over SPI. Check wiring and permissions.")
+            raise Exception("Failed to initialize BNO08x")
+
+    def _setReports(self, interval_ms: int):
+        if not self.imu.enableRotationVector(interval_ms):
+            self.api.log("Failed to enable BNO086 report")
+
+    def _close(self):
+        self.imu.close()
+
+    def _generateNMEA(self, roll: float, pitch: float, heading: float):
+        enable_hdm = self.getConfigValue(self.ENABLE_HDM)
+        enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
+        enable_roll = self.getConfigValue(self.ENABLE_ROLL)
+        enable_pitch = self.getConfigValue(self.ENABLE_PITCH)
+
+        if enable_roll:
+            nmea = f"$IIXDR,A,,{roll:.1f},D,ROLL*\r\n"
+            self.api.addNMEA(self, nmea, addCheckSum=True,omitDecode=True)
+
+    
     def run(self):
         """
         the run method
@@ -116,15 +203,21 @@ class Plugin(object):
         """
         seq = 0
         self.api.log("started")
+        self.api.setStatus('STARTED', 'initializing')
+        self._setup()
+        interval_ms = int(self.getConfigValue(self.INTERVAL)*1000)
+        self._setReports(interval_ms)
         self.api.setStatus('NMEA', 'running')
         while not self.api.shouldStopMainThread():
-            seq, data = self.api.fetchFromQueue(seq, 10)
-            if len(data) > 0:
-                for line in data:
-                    # do something
-                    self.count += 1
-                    if self.count % 10 == 0:
-                        self.api.addData(self.PATH, self.count)
-                        # self.api.addData("wrong.path",count) #this would be ignored as we did not announce our path - and will write to the log
-
-    
+            if self.imu.wasReset():
+                self.api.log("Sensor was reset.")
+                self._setReports(interval_ms)
+            try:
+                if self.imu.getSensorEvent():
+                    roll = self.imu.getRoll() * 180.0 / math.pi
+                    pitch = self.imu.getPitch() * 180.0 / math.pi
+                    heading = self.imu.getYaw() * 180.0 / math.pi
+                    self._generateNMEA(roll, pitch, heading)
+                time.sleep(0.01)
+            except Exception as e:
+                self.api.error(f"Error reading BNO08x data: {e}")
