@@ -1,0 +1,13 @@
+# Compiled files
+*.so
+*.o
+
+# Python runtime files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Build directory
+build/
