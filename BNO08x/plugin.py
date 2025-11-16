@@ -210,16 +210,16 @@ class Plugin(object):
 
         if enable_roll:
             nmea = f"$IIXDR,A,{roll:.1f},D,ROLL"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
         if enable_pitch:
             nmea = f"$IIXDR,A,{pitch:.1f},D,PITCH"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
         if enable_hdm:
             nmea = f"$IIHDM,{heading:05.1f},M"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
         if enable_xdr_hdm:
             nmea = f"$IIXDR,A,{heading:.1f},D,HDM"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)   
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)   
 
 
     
