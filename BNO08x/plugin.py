@@ -14,6 +14,20 @@ from avnav_api import AVNApi
 
 PLUGIN_VERSION = 20251115
 
+# todo:
+# -prio 1
+#   -convert yaw to HDM
+#   -add clean start and shutdown on config changes
+#   -make heading direction configurable (yaw/pitch/roll)
+#   -check roll/pitch zero cal
+#   -check if PSO/Wake usage can wake sensor after sh2_open and no HW reset is needed
+# 
+# -prio 2
+#   -maybe change to i2c interface
+#   -check influence of active cooler fan on heading
+#   -turn off compass dynamic cal and add deviation table
+
+
 
 class Plugin(object):
     PATH = "gps.test"
