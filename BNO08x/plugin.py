@@ -19,6 +19,7 @@ PLUGIN_VERSION = 20251115
 #   -convert yaw to HDM
 #   -add clean start and shutdown on config changes
 #   -make heading direction configurable (yaw/pitch/roll)
+#   -priority settings for generated NMEA
 #   -check roll/pitch zero cal
 #   -check if PSO/Wake usage can wake sensor after sh2_open and no HW reset is needed
 # 
