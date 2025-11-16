@@ -188,7 +188,7 @@ class Plugin(object):
         self.imu.close()
 
     def _generateNMEA(self, roll: float, pitch: float, heading: float):
-        self.api.log(f"Roll: {roll:.2f}, Pitch: {pitch:.2f}, Heading: {heading:.2f}")   
+        self.api.debug(f"Roll: {roll:.2f}, Pitch: {pitch:.2f}, Heading: {heading:.2f}")   
         enable_hdm = self.getConfigValue(self.ENABLE_HDM)
         enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
         enable_roll = self.getConfigValue(self.ENABLE_ROLL)
@@ -197,6 +197,16 @@ class Plugin(object):
         if enable_roll:
             nmea = f"$IIXDR,A,{roll:.1f},D,ROLL"
             self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+        if enable_pitch:
+            nmea = f"$IIXDR,A,{pitch:.1f},D,PITCH"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+        if enable_hdm:
+            nmea = f"$IIHDM,{heading:05.1f},M"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
+        if enable_xdr_hdm:
+            nmea = f"$IIXDR,A,{heading:.1f},D,HDM"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)   
+
 
     
     def run(self):
