@@ -157,7 +157,7 @@ class Plugin(object):
             return self.api.getConfigValue(name, self.configDefaults[name])
         return self.api.getConfigValue(name)
 
-    def _setup(self):
+    def _setup(self) -> bool:
         self.imu = bno08x.BNO08x()
         self.imu.enableDebugging(False)
 
@@ -172,24 +172,31 @@ class Plugin(object):
         ok = self.imu.beginSPI(int_pin, rst_pin, cs_pin, spi_speed, spi_device, gpiochip)
         if not ok:
             self.api.error("Failed to initialize BNO08x over SPI. Check wiring and permissions.")
-            raise Exception("Failed to initialize BNO08x")
+            return False
+        else:
+            self.api.log("BNO08x initialized successfully over SPI.")
+            time.sleep(1)
+            return True
 
-    def _setReports(self, interval_ms: int):
+    def _setReports(self, interval_ms: int) -> bool:
         if not self.imu.enableRotationVector(interval_ms):
             self.api.log("Failed to enable BNO086 report")
+            return False
+        return True
 
     def _close(self):
         self.imu.close()
 
     def _generateNMEA(self, roll: float, pitch: float, heading: float):
+        self.api.log(f"Roll: {roll:.2f}, Pitch: {pitch:.2f}, Heading: {heading:.2f}")   
         enable_hdm = self.getConfigValue(self.ENABLE_HDM)
         enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
         enable_roll = self.getConfigValue(self.ENABLE_ROLL)
         enable_pitch = self.getConfigValue(self.ENABLE_PITCH)
 
         if enable_roll:
-            nmea = f"$IIXDR,A,,{roll:.1f},D,ROLL*\r\n"
-            self.api.addNMEA(self, nmea, addCheckSum=True,omitDecode=True)
+            nmea = f"$IIXDR,A,{roll:.1f},D,ROLL"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=True)
 
     
     def run(self):
@@ -204,14 +211,25 @@ class Plugin(object):
         seq = 0
         self.api.log("started")
         self.api.setStatus('STARTED', 'initializing')
-        self._setup()
+        if not self._setup():
+            self.api.setStatus('ERROR', 'initialization failed')
+            return 
+        
         interval_ms = int(self.getConfigValue(self.INTERVAL)*1000)
-        self._setReports(interval_ms)
+        self.api.log(f"Using report interval: {interval_ms} ms")    
+        if not self._setReports(interval_ms):
+            self.api.error("Failed to set reports on BNO08x.")
+            self.api.setStatus('ERROR', 'failed to set reports')
+            return
         self.api.setStatus('NMEA', 'running')
         while not self.api.shouldStopMainThread():
             if self.imu.wasReset():
-                self.api.log("Sensor was reset.")
-                self._setReports(interval_ms)
+                self.api.error("Sensor was reset.")
+                if not self._setReports(interval_ms):
+                    self.api.error("Failed to set reports on BNO08x after reset.")
+                    self.api.setStatus('ERROR', 'failed to set reports after reset')
+                    return
+            
             try:
                 if self.imu.getSensorEvent():
                     roll = self.imu.getRoll() * 180.0 / math.pi

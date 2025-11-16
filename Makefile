@@ -1,6 +1,6 @@
 # Configuration
 GITHUB_REPO = https://github.com/pozoo/SparkFun_BNO08x_RaspberryPi_Library.git
-BRANCH = raspi_spi_comm
+BRANCH = clean_up_comms
 BUILD_DIR = build
 REPO_NAME = SparkFun_BNO08x_RaspberryPi_Library
 DEST_DIR = BNO08x
