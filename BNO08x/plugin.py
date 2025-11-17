@@ -16,12 +16,13 @@ PLUGIN_VERSION = 20251115
 
 # todo:
 # -prio 1
-#   -convert yaw to HDM
+#   -convert yaw to HDM => done
 #   -add clean start and shutdown on config changes
 #   -make heading direction configurable (yaw/pitch/roll)
 #   -priority settings for generated NMEA
 #   -check roll/pitch zero cal
 #   -check if PSO/Wake usage can wake sensor after sh2_open and no HW reset is needed
+#   -add turn rate to NMEA
 # 
 # -prio 2
 #   -maybe change to i2c interface
@@ -32,7 +33,7 @@ PLUGIN_VERSION = 20251115
 
 class Plugin(object):
     PATH = "gps.test"
-    INTERVAL = "interval"
+    INTERVAL = "intervals"
     SPI_DEVICE = "spi_device"
     GPIOCHIP = "gpiochip"
     INT_PIN = "int_pin"
@@ -47,9 +48,9 @@ class Plugin(object):
     CONFIG = [
         {
             "name": INTERVAL,
-            "description": "reporting time interval in seconds",
-            "type": "FLOAT",
-            "default": 0.25,
+            "description": "reporting time interval in milliseconds",
+            "type": "NUMBER",
+            "default": 250,
         },
         {
             "name": SPI_DEVICE,
@@ -141,6 +142,10 @@ class Plugin(object):
             @type  api: AVNApi
         """
         self.api = api  # type: AVNApi
+        self.changeSequence=0
+        self.startSequence=0
+        self.initializeSensor = True # used in loop to indicate initialization is necessary 
+        self.connectionUp = False # indicates sensor is currently connected
         # Create a lookup dictionary for config defaults
         self.configDefaults = {cf['name']: cf.get('default') for cf in self.CONFIG}
         if hasattr(self.api, 'registerEditableParameters'):
@@ -162,10 +167,13 @@ class Plugin(object):
     def _apiRestart(self):
         self.startSequence += 1
         self.changeSequence += 1
+        self.api.log("_apiRestart() called")
 
     def _changeConfig(self, newValues):
         self.api.saveConfigValues(newValues)
         self.changeSequence += 1
+        self.initializeSensor = True
+        self.api.log("_changeConfig() called")
 
     def getConfigValue(self, name):
         if name in self.configDefaults:
@@ -235,19 +243,29 @@ class Plugin(object):
         """
         seq = 0
         self.api.log("started")
-        self.api.setStatus('STARTED', 'initializing')
-        if not self._setup():
-            self.api.setStatus('ERROR', 'initialization failed')
-            return 
-        
-        interval_ms = int(self.getConfigValue(self.INTERVAL)*1000)
-        self.api.log(f"Using report interval: {interval_ms} ms")    
-        if not self._setReports(interval_ms):
-            self.api.error("Failed to set reports on BNO08x.")
-            self.api.setStatus('ERROR', 'failed to set reports')
-            return
-        self.api.setStatus('NMEA', 'running')
+        interval_ms = int(self.getConfigValue(self.INTERVAL))
+
         while not self.api.shouldStopMainThread():
+            if self.initializeSensor:
+                if self.connectionUp:
+                    self.imu.close()
+                    self.api.log("BNO08x connection closed")
+                self.api.setStatus('STARTED', 'initializing')
+                if not self._setup():
+                    self.api.setStatus('ERROR', 'initialization failed')
+                    return
+                self.api.log("BNO08x initialized successfully") 
+                interval_ms = int(self.getConfigValue(self.INTERVAL))
+                self.api.log(f"Using report interval: {interval_ms} ms")    
+                if not self._setReports(interval_ms):
+                    self.api.error("Failed to set reports on BNO08x.")
+                    self.api.setStatus('ERROR', 'failed to set reports')
+                    return
+                self.api.log("BNO08x reports set successfully")
+                self.api.setStatus('NMEA', 'running')
+                self.connectionUp = True
+                self.initializeSensor = False
+
             if self.imu.wasReset():
                 self.api.error("Sensor was reset.")
                 if not self._setReports(interval_ms):
@@ -259,8 +277,15 @@ class Plugin(object):
                 if self.imu.getSensorEvent():
                     roll = self.imu.getRoll() * 180.0 / math.pi
                     pitch = self.imu.getPitch() * 180.0 / math.pi
-                    heading = self.imu.getYaw() * 180.0 / math.pi
+                    yaw = self.imu.getYaw() * 180.0 / math.pi
+                    if (yaw < 0):
+                        heading = yaw + 360.0
+                    else:
+                        heading = yaw  
                     self._generateNMEA(roll, pitch, heading)
                 time.sleep(0.01)
             except Exception as e:
                 self.api.error(f"Error reading BNO08x data: {e}")
+
+        self.imu.close()
+        self.api.log("BNO08x plugin stopped")
