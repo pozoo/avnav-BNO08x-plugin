@@ -13,21 +13,23 @@ import bno08x
 from avnav_api import AVNApi
 
 PLUGIN_VERSION = 20251115
+SOURCE = "BNO08x"
 
 # todo:
 # -prio 1
 #   -convert yaw to HDM => done
-#   -add clean start and shutdown on config changes
+#   -add clean start and shutdown on config changes => done
 #   -make heading direction configurable (yaw/pitch/roll)
 #   -priority settings for generated NMEA
 #   -check roll/pitch zero cal
 #   -check if PSO/Wake usage can wake sensor after sh2_open and no HW reset is needed
-#   -add turn rate to NMEA
+#   
 # 
 # -prio 2
 #   -maybe change to i2c interface
 #   -check influence of active cooler fan on heading
 #   -turn off compass dynamic cal and add deviation table
+#   -add turn rate to NMEA
 
 
 
@@ -44,11 +46,13 @@ class Plugin(object):
     ENABLE_XDR_HDM = "enable_xdr_hdm"
     ENABLE_ROLL = "enable_roll"
     ENABLE_PITCH = "enable_pitch"
+    PRIORITY = "nmea_priority"
+    TALKER_ID = "nmea_id"
 
     CONFIG = [
         {
             "name": INTERVAL,
-            "description": "reporting time interval in milliseconds",
+            "description": "reporting time interval in milliseconds (10-1000)",
             "type": "NUMBER",
             "default": 250,
         },
@@ -66,25 +70,25 @@ class Plugin(object):
         },
         {
             "name": INT_PIN,
-            "description": "GPIO pin number for interrupt (INT)",
+            "description": "GPIO pin number for interrupt (INT, 0-27)",
             "type": "NUMBER",
             "default": 27,
         },
         {
             "name": RST_PIN,
-            "description": "GPIO pin number for reset (RST)",
+            "description": "GPIO pin number for reset (RST, 0-27)",
             "type": "NUMBER",
             "default": 22,
         },
         {
             "name": CS_PIN,
-            "description": "GPIO pin number for chip select (CS), -1 uses default SPI CS pin",
+            "description": "GPIO pin number for chip select (CS, -1 or 0-27), -1 uses default SPI CS pin",
             "type": "NUMBER",
             "default": -1,
         },
         {
             "name": SPI_SPEED,
-            "description": "SPI speed in Hz",
+            "description": "SPI speed in Hz (100000-3000000)",
             "type": "NUMBER",
             "default": 1000000,
         },
@@ -111,6 +115,18 @@ class Plugin(object):
             "description": "write NMEA XDR sentence for PITCH",
             "default": "True",
             "type": "BOOLEAN",
+        },
+        {
+        "name": PRIORITY,
+        "description": "NMEA source priority (0-100)",
+        "type": "NUMBER",
+        "default": 10,
+        },
+        {
+            "name": TALKER_ID,
+            "description": "NMEA talker ID for emitted sentences (2 uppercase letters)",
+            "type": "STRING",
+            "default": "II",
         },
     ]
 
@@ -180,6 +196,63 @@ class Plugin(object):
             return self.api.getConfigValue(name, self.configDefaults[name])
         return self.api.getConfigValue(name)
 
+    def validateConfig(self):
+        """Validate all configuration values and raise exception if invalid"""
+        
+        # Validate INTERVAL (must be positive)
+        interval = int(self.getConfigValue(self.INTERVAL))  
+        if interval < 100 or interval > 1000:
+            raise ValueError(f"Invalid {self.INTERVAL}: must be between 10 and 1000 ms, got {interval}")
+        
+        # Validate SPI_DEVICE (must exist)
+        spi_device = self.getConfigValue(self.SPI_DEVICE)
+        if not isinstance(spi_device, str) or not spi_device:
+            raise ValueError(f"Invalid {self.SPI_DEVICE}: must be a non-empty string, got {spi_device}")
+        if not os.path.exists(spi_device):
+            raise ValueError(f"Invalid {self.SPI_DEVICE}: device {spi_device} does not exist")
+        
+        # Validate GPIOCHIP
+        gpiochip = self.getConfigValue(self.GPIOCHIP)
+        if not isinstance(gpiochip, str) or not gpiochip:
+            raise ValueError(f"Invalid {self.GPIOCHIP}: must be a non-empty string, got {gpiochip}")
+        gpiochip_path = f"/dev/{gpiochip}" if not gpiochip.startswith("/dev/") else gpiochip
+        if not os.path.exists(gpiochip_path):
+            raise ValueError(f"Invalid {self.GPIOCHIP}: {gpiochip_path} does not exist")
+        
+        # Validate INT_PIN (must be valid GPIO number)
+        int_pin = int(self.getConfigValue(self.INT_PIN))
+        if int_pin < 0 or int_pin > 27:
+            raise ValueError(f"Invalid {self.INT_PIN}: must be between 0 and 27, got {int_pin}")
+        
+        # Validate RST_PIN (must be valid GPIO number)
+        rst_pin = int(self.getConfigValue(self.RST_PIN))
+        if rst_pin < 0 or rst_pin > 27:
+            raise ValueError(f"Invalid {self.RST_PIN}: must be between 0 and 27, got {rst_pin}")
+        
+        # Validate CS_PIN (must be valid GPIO number or -1)
+        cs_pin = int(self.getConfigValue(self.CS_PIN))
+        if cs_pin < -1 or cs_pin > 27:
+            raise ValueError(f"Invalid {self.CS_PIN}: must be -1 or between 0 and 27, got {cs_pin}")
+        
+        # Validate SPI_SPEED (must be reasonable)
+        spi_speed = int(self.getConfigValue(self.SPI_SPEED))
+        if spi_speed < 100000 or spi_speed > 3000000:
+            raise ValueError(f"Invalid {self.SPI_SPEED}: must be between 100kHz and 3MHz, got {spi_speed}")
+        
+        # Validate PRIORITY (must be reasonable)
+        priority = int(self.getConfigValue(self.PRIORITY))
+        if priority < 0 or priority > 100:
+            raise ValueError(f"Invalid {self.PRIORITY}: must be between 0 and 100, got {priority}")
+        
+        # Validate TALKER_ID (must be 2 uppercase letters)
+        talker_id = self.getConfigValue(self.TALKER_ID)
+        if not isinstance(talker_id, str):
+            raise ValueError(f"Invalid {self.TALKER_ID}: must be a string, got {talker_id}")
+        if len(talker_id) != 2:
+            raise ValueError(f"Invalid {self.TALKER_ID}: must be exactly 2 characters, got '{talker_id}'")
+        if not talker_id.isalpha() or not talker_id.isupper():
+            raise ValueError(f"Invalid {self.TALKER_ID}: must be 2 uppercase letters, got '{talker_id}'")
+
     def _setup(self) -> bool:
         self.imu = bno08x.BNO08x()
         self.imu.enableDebugging(False)
@@ -216,19 +289,20 @@ class Plugin(object):
         enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
         enable_roll = self.getConfigValue(self.ENABLE_ROLL)
         enable_pitch = self.getConfigValue(self.ENABLE_PITCH)
-
+        nmea_priority = int(self.getConfigValue(self.PRIORITY))
+        nmea_id = self.getConfigValue(self.TALKER_ID)
         if enable_roll:
-            nmea = f"$IIXDR,A,{roll:.1f},D,ROLL"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
+            nmea = f"${nmea_id}XDR,A,{roll:.1f},D,ROLL"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
         if enable_pitch:
-            nmea = f"$IIXDR,A,{pitch:.1f},D,PITCH"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
+            nmea = f"${nmea_id}XDR,A,{pitch:.1f},D,PITCH"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
         if enable_hdm:
-            nmea = f"$IIHDM,{heading:05.1f},M"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)
+            nmea = f"${nmea_id}HDM,{heading:05.1f},M"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
         if enable_xdr_hdm:
-            nmea = f"$IIXDR,A,{heading:.1f},D,HDM"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False)   
+            nmea = f"${nmea_id}XDR,A,{heading:.1f},D,HDM"
+            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)   
 
 
     
@@ -251,6 +325,7 @@ class Plugin(object):
                     self.imu.close()
                     self.api.log("BNO08x connection closed")
                 self.api.setStatus('STARTED', 'initializing')
+                self.validateConfig()
                 if not self._setup():
                     self.api.setStatus('ERROR', 'initialization failed')
                     return
