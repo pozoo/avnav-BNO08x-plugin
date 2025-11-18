@@ -20,9 +20,12 @@ SOURCE = "BNO08x"
 #   -convert yaw to HDM => done
 #   -add clean start and shutdown on config changes => done
 #   -make heading direction configurable (yaw/pitch/roll)
-#   -priority settings for generated NMEA
-#   -check roll/pitch zero cal
+#   -priority settings for generated NMEA => done
+#   -check roll/pitch zero cal (after mounting on HAT)
 #   -check if PSO/Wake usage can wake sensor after sh2_open and no HW reset is needed
+#   -check long term stability of heading
+#     -with active dynamic cal for magnetometer, heading jumps every 10min between 0-8° => not really good ennough
+#     -w/o dynamic cal, heading: todo
 #   
 # 
 # -prio 2
@@ -275,35 +278,65 @@ class Plugin(object):
             return True
 
     def _setReports(self, interval_ms: int) -> bool:
+        SH2_CAL_ACCEL = 0x01
+        SH2_CAL_GYRO  = 0x02
+        SH2_CAL_MAG   = 0x04
+        SH2_CAL_PLANAR = 0x08
+
         if not self.imu.enableRotationVector(interval_ms):
-            self.api.log("Failed to enable BNO086 report")
+            self.api.log("Failed to enable BNO086 rotation vector report")
+            return False
+        if not self.imu.enableMagnetometer(interval_ms):
+            self.api.log("Failed to enable BNO086 magnetometer report")
+            return False
+        if not self.imu.setCalibrationConfig(SH2_CAL_ACCEL | SH2_CAL_GYRO | SH2_CAL_MAG):
+            self.api.log("Failed to set BNO08x calibration configuration")
             return False
         return True
 
     def _close(self):
         self.imu.close()
 
-    def _generateNMEA(self, roll: float, pitch: float, heading: float):
-        self.api.debug(f"Roll: {roll:.2f}, Pitch: {pitch:.2f}, Heading: {heading:.2f}")   
+    def _generateNMEA(self):
         enable_hdm = self.getConfigValue(self.ENABLE_HDM)
         enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
         enable_roll = self.getConfigValue(self.ENABLE_ROLL)
         enable_pitch = self.getConfigValue(self.ENABLE_PITCH)
         nmea_priority = int(self.getConfigValue(self.PRIORITY))
         nmea_id = self.getConfigValue(self.TALKER_ID)
-        if enable_roll:
-            nmea = f"${nmea_id}XDR,A,{roll:.1f},D,ROLL"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
-        if enable_pitch:
-            nmea = f"${nmea_id}XDR,A,{pitch:.1f},D,PITCH"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
-        if enable_hdm:
-            nmea = f"${nmea_id}HDM,{heading:05.1f},M"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
-        if enable_xdr_hdm:
-            nmea = f"${nmea_id}XDR,A,{heading:.1f},D,HDM"
-            self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)   
 
+        SENSOR_REPORTID_GAME_ROTATION_VECTOR = 0x08
+        SENSOR_REPORTID_ROTATION_VECTOR = 0x05
+        if (self.imu.getSensorEventID() == SENSOR_REPORTID_ROTATION_VECTOR or self.imu.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR):
+            roll = self.imu.getRoll() * 180.0 / math.pi
+            pitch = self.imu.getPitch() * 180.0 / math.pi
+            yaw = self.imu.getYaw() * 180.0 / math.pi
+            if (yaw < 0):
+                heading = yaw + 360.0
+            else:
+                heading = yaw   
+            self.api.debug(f"Roll: {roll:.2f}, Pitch: {pitch:.2f}, Heading: {heading:.2f}")   
+
+            if enable_roll:
+                nmea = f"${nmea_id}XDR,A,{roll:.1f},D,ROLL"
+                self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
+            if enable_pitch:
+                nmea = f"${nmea_id}XDR,A,{pitch:.1f},D,PITCH"
+                self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
+            if enable_hdm:
+                nmea = f"${nmea_id}HDM,{heading:05.1f},M"
+                self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
+            if enable_xdr_hdm:
+                nmea = f"${nmea_id}XDR,A,{heading:.1f},D,HDM"
+                self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)   
+       
+        SH2_MAGNETIC_FIELD_CALIBRATED = 0x03
+        if (self.imu.getSensorEventID() == SH2_MAGNETIC_FIELD_CALIBRATED):
+            mag_cal_accuracy = self.imu.getMagAccuracy()
+            self.api.debug(f"Mag_cal_acc {mag_cal_accuracy:.0f}") 
+            if enable_hdm or enable_xdr_hdm:
+                nmea = f"${nmea_id}XDR,A,{mag_cal_accuracy:.1f},D,MAG_ACC"
+                self.api.addNMEA(nmea, addCheckSum=True, omitDecode=False, sourcePriority=nmea_priority, source=SOURCE)
 
     
     def run(self):
@@ -350,14 +383,7 @@ class Plugin(object):
             
             try:
                 if self.imu.getSensorEvent():
-                    roll = self.imu.getRoll() * 180.0 / math.pi
-                    pitch = self.imu.getPitch() * 180.0 / math.pi
-                    yaw = self.imu.getYaw() * 180.0 / math.pi
-                    if (yaw < 0):
-                        heading = yaw + 360.0
-                    else:
-                        heading = yaw  
-                    self._generateNMEA(roll, pitch, heading)
+                    self._generateNMEA()
                 time.sleep(0.01)
             except Exception as e:
                 self.api.error(f"Error reading BNO08x data: {e}")
