@@ -49,6 +49,7 @@ class Plugin(object):
     ENABLE_XDR_HDM = "enable_xdr_hdm"
     ENABLE_ROLL = "enable_roll"
     ENABLE_PITCH = "enable_pitch"
+    ENABLE_DYN_MAG_CAL = "enable_dyn_mag_cal"
     PRIORITY = "nmea_priority"
     TALKER_ID = "nmea_id"
 
@@ -120,10 +121,16 @@ class Plugin(object):
             "type": "BOOLEAN",
         },
         {
-        "name": PRIORITY,
-        "description": "NMEA source priority (0-100)",
-        "type": "NUMBER",
-        "default": 10,
+            "name": ENABLE_DYN_MAGs_CAL,
+            "description": "enable dynamic magnetometer calibration",
+            "default": "True",
+            "type": "BOOLEAN",
+        },
+        {
+            "name": PRIORITY,
+            "description": "NMEA source priority (0-100)",
+            "type": "NUMBER",
+            "default": 10,
         },
         {
             "name": TALKER_ID,
@@ -283,13 +290,17 @@ class Plugin(object):
         SH2_CAL_MAG   = 0x04
         SH2_CAL_PLANAR = 0x08
 
+        cal_type = SH2_CAL_ACCEL | SH2_CAL_GYRO
+        if self.getConfigValue(self.ENABLE_DYN_MAG_CAL):
+            cal_type |= SH2_CAL_MAG
+
         if not self.imu.enableRotationVector(interval_ms):
             self.api.log("Failed to enable BNO086 rotation vector report")
             return False
         if not self.imu.enableMagnetometer(interval_ms):
             self.api.log("Failed to enable BNO086 magnetometer report")
             return False
-        if not self.imu.setCalibrationConfig(SH2_CAL_ACCEL | SH2_CAL_GYRO | SH2_CAL_MAG):
+        if not self.imu.setCalibrationConfig(cal_type):
             self.api.log("Failed to set BNO08x calibration configuration")
             return False
         return True
