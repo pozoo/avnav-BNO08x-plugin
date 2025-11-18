@@ -121,7 +121,7 @@ class Plugin(object):
             "type": "BOOLEAN",
         },
         {
-            "name": ENABLE_DYN_MAGs_CAL,
+            "name": ENABLE_DYN_MAG_CAL,
             "description": "enable dynamic magnetometer calibration",
             "default": "True",
             "type": "BOOLEAN",
@@ -293,7 +293,7 @@ class Plugin(object):
         cal_type = SH2_CAL_ACCEL | SH2_CAL_GYRO
         if self.getConfigValue(self.ENABLE_DYN_MAG_CAL):
             cal_type |= SH2_CAL_MAG
-
+        
         if not self.imu.enableRotationVector(interval_ms):
             self.api.log("Failed to enable BNO086 rotation vector report")
             return False
@@ -303,6 +303,19 @@ class Plugin(object):
         if not self.imu.setCalibrationConfig(cal_type):
             self.api.log("Failed to set BNO08x calibration configuration")
             return False
+        
+        # Log which calibrations are enabled
+        cal_enabled = []
+        if cal_type & SH2_CAL_ACCEL:
+            cal_enabled.append("ACCEL")
+        if cal_type & SH2_CAL_GYRO:
+            cal_enabled.append("GYRO")
+        if cal_type & SH2_CAL_MAG:
+            cal_enabled.append("MAG")
+        if cal_type & SH2_CAL_PLANAR:
+            cal_enabled.append("PLANAR")
+        self.api.log(f"Calibration enabled: {', '.join(cal_enabled)}")
+
         return True
 
     def _close(self):
