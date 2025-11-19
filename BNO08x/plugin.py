@@ -26,6 +26,8 @@ SOURCE = "BNO08x"
 #   -check long term stability of heading
 #     -with active dynamic cal for magnetometer, heading jumps every 10min between 0-8° => not really good ennough
 #     -w/o dynamic cal, heading: todo
+#  -probably still need to swap roll and pitch, in default roll is around x, 
+#    but y points to north, so roll should be around y as north axis
 #   
 # 
 # -prio 2
@@ -45,6 +47,7 @@ class Plugin(object):
     RST_PIN = "rst_pin"
     CS_PIN = "cs_pin"
     SPI_SPEED = "spi_speed"
+    ORIENTATION = "orientation"
     ENABLE_HDM = "enable_hdm"
     ENABLE_XDR_HDM = "enable_xdr_hdm"
     ENABLE_ROLL = "enable_roll"
@@ -95,6 +98,38 @@ class Plugin(object):
             "description": "SPI speed in Hz (100000-3000000)",
             "type": "NUMBER",
             "default": 1000000,
+        },
+        {
+            "name": ORIENTATION,
+            "description": "select orientation of the sensor on the board, x, y, z axis, e.g. ORIENTATION_EAST(x)_NORTH(y)_UP(z)",
+            "default": "ORIENTATION_EAST_NORTH_UP",
+            "type": "SELECT",
+            "rangeOrList": [
+                "ORIENTATION_EAST_NORTH_UP",
+                "ORIENTATION_NORTH_WEST_UP",
+                "ORIENTATION_WEST_SOUTH_UP",
+                "ORIENTATION_SOUTH_EAST_UP",
+                "ORIENTATION_EAST_SOUTH_DOWN",
+                "ORIENTATION_NORTH_EAST_DOWN",
+                "ORIENTATION_WEST_NORTH_DOWN",
+                "ORIENTATION_SOUTH_WEST_DOWN",
+                "ORIENTATION_UP_SOUTH_EAST",
+                "ORIENTATION_NORTH_UP_EAST",
+                "ORIENTATION_DOWN_NORTH_EAST",
+                "ORIENTATION_SOUTH_DOWN_EAST",
+                "ORIENTATION_UP_NORTH_WEST",
+                "ORIENTATION_NORTH_DOWN_WEST",
+                "ORIENTATION_DOWN_SOUTH_WEST",
+                "ORIENTATION_SOUTH_UP_WEST",
+                "ORIENTATION_UP_EAST_NORTH",
+                "ORIENTATION_WEST_UP_NORTH",
+                "ORIENTATION_DOWN_WEST_NORTH",
+                "ORIENTATION_EAST_DOWN_NORTH",
+                "ORIENTATION_UP_WEST_SOUTH",
+                "ORIENTATION_WEST_DOWN_SOUTH",
+                "ORIENTATION_DOWN_EAST_SOUTH",
+                "ORIENTATION_EAST_UP_SOUTH"
+            ]
         },
         {
             "name": ENABLE_HDM,
@@ -209,12 +244,15 @@ class Plugin(object):
         return self.api.getConfigValue(name)
     
     def getBoolConfigValue(self, name):
-        """Get a boolean configuration value and convert string to bool if needed"""
+        # Get a boolean configuration value and convert string to bool if needed
         val = self.getConfigValue(name)
         # AvNav returns boolean configs as strings 'True'/'False'
-        s
-        # Fallback for actual boolean or integer values
+        if isinstance(val, str):
+            return val.lower() in ('true', '1', 'yes')
         return bool(val)
+    
+    def getOrientationQuaternion(self, orientation_name):
+        return getattr(bno08x, orientation_name, None)
 
     def validateConfig(self):
         """Validate all configuration values and raise exception if invalid"""
@@ -295,6 +333,11 @@ class Plugin(object):
             return True
 
     def _setReports(self, interval_ms: int) -> bool:
+        orientation = self.getConfigValue(self.ORIENTATION)
+        orientation_quaternion = self.getOrientationQuaternion(orientation)
+        self.api.log(f"Setting orientation to {orientation} with quaternion {orientation_quaternion}")  
+        self.imu.setReorientation(orientation_quaternion)  
+
         SH2_CAL_ACCEL = 0x01
         SH2_CAL_GYRO  = 0x02
         SH2_CAL_MAG   = 0x04
