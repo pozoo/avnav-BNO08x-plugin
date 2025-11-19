@@ -343,10 +343,9 @@ class Plugin(object):
         SH2_CAL_MAG   = 0x04
         SH2_CAL_PLANAR = 0x08
  
-        cal_type = SH2_CAL_ACCEL | SH2_CAL_GYRO
+        cal_type = SH2_CAL_ACCEL # | SH2_CAL_GYRO  # gyro cal should be off normally
         if self.getBoolConfigValue(self.ENABLE_DYN_MAG_CAL):
             cal_type |= SH2_CAL_MAG
-            self.api.log("Dynamic magnetometer calibration enabled")
         
         if not self.imu.enableRotationVector(interval_ms):
             self.api.log("Failed to enable BNO086 rotation vector report")
