@@ -49,7 +49,7 @@ class Plugin(object):
     ENABLE_XDR_HDM = "enable_xdr_hdm"
     ENABLE_ROLL = "enable_roll"
     ENABLE_PITCH = "enable_pitch"
-    ENABLE_DYN_MAG_CAL = "enable_dyn_mag_cal"
+    ENABLE_DYN_MAG_CAL = "enable_dyn_cal_mag_b"
     PRIORITY = "nmea_priority"
     TALKER_ID = "nmea_id"
 
@@ -99,31 +99,31 @@ class Plugin(object):
         {
             "name": ENABLE_HDM,
             "description": "enable writing of HDM NMEA sentences",
-            "default": "True",
+            "default": True,
             "type": "BOOLEAN",
         },
         {
             "name": ENABLE_XDR_HDM,
             "description": "writes HDM as XDR HDM instead of direct HDM sentence to allow running it in parallel to anoher compass",
-            "default": "True",
+            "default": True,
             "type": "BOOLEAN",
         },
         {
             "name": ENABLE_ROLL,
             "description": "write NMEA XDR sentence for ROLL",
-            "default": "True",
+            "default": True,
             "type": "BOOLEAN",
         },
         {
             "name": ENABLE_PITCH,
             "description": "write NMEA XDR sentence for PITCH",
-            "default": "True",
+            "default": True,
             "type": "BOOLEAN",
         },
         {
             "name": ENABLE_DYN_MAG_CAL,
             "description": "enable dynamic magnetometer calibration",
-            "default": "True",
+            "default": True,
             "type": "BOOLEAN",
         },
         {
@@ -203,8 +203,18 @@ class Plugin(object):
 
     def getConfigValue(self, name):
         if name in self.configDefaults:
-            return self.api.getConfigValue(name, self.configDefaults[name])
+            val = self.api.getConfigValue(name, self.configDefaults[name])
+            # self.api.log(f"Getting config value for {name} with default {self.configDefaults[name]}, result={val}")
+            return val
         return self.api.getConfigValue(name)
+    
+    def getBoolConfigValue(self, name):
+        """Get a boolean configuration value and convert string to bool if needed"""
+        val = self.getConfigValue(name)
+        # AvNav returns boolean configs as strings 'True'/'False'
+        s
+        # Fallback for actual boolean or integer values
+        return bool(val)
 
     def validateConfig(self):
         """Validate all configuration values and raise exception if invalid"""
@@ -275,8 +285,8 @@ class Plugin(object):
         spi_speed = int(self.getConfigValue(self.SPI_SPEED))
 
         self.api.log(f"Opening SPI: {spi_device} cs={cs_pin} int={int_pin} rst={rst_pin} speed={spi_speed}")
-        ok = self.imu.beginSPI(int_pin, rst_pin, cs_pin, spi_speed, spi_device, gpiochip)
-        if not ok:
+        initialized = self.imu.beginSPI(int_pin, rst_pin, cs_pin, spi_speed, spi_device, gpiochip)
+        if not initialized:
             self.api.error("Failed to initialize BNO08x over SPI. Check wiring and permissions.")
             return False
         else:
@@ -289,10 +299,11 @@ class Plugin(object):
         SH2_CAL_GYRO  = 0x02
         SH2_CAL_MAG   = 0x04
         SH2_CAL_PLANAR = 0x08
-
+ 
         cal_type = SH2_CAL_ACCEL | SH2_CAL_GYRO
-        if self.getConfigValue(self.ENABLE_DYN_MAG_CAL):
+        if self.getBoolConfigValue(self.ENABLE_DYN_MAG_CAL):
             cal_type |= SH2_CAL_MAG
+            self.api.log("Dynamic magnetometer calibration enabled")
         
         if not self.imu.enableRotationVector(interval_ms):
             self.api.log("Failed to enable BNO086 rotation vector report")
@@ -322,13 +333,13 @@ class Plugin(object):
         self.imu.close()
 
     def _generateNMEA(self):
-        enable_hdm = self.getConfigValue(self.ENABLE_HDM)
-        enable_xdr_hdm = self.getConfigValue(self.ENABLE_XDR_HDM)
-        enable_roll = self.getConfigValue(self.ENABLE_ROLL)
-        enable_pitch = self.getConfigValue(self.ENABLE_PITCH)
+        enable_hdm = self.getBoolConfigValue(self.ENABLE_HDM)
+        enable_xdr_hdm = self.getBoolConfigValue(self.ENABLE_XDR_HDM)
+        enable_roll = self.getBoolConfigValue(self.ENABLE_ROLL)
+        enable_pitch = self.getBoolConfigValue(self.ENABLE_PITCH)
         nmea_priority = int(self.getConfigValue(self.PRIORITY))
         nmea_id = self.getConfigValue(self.TALKER_ID)
-
+        
         SENSOR_REPORTID_GAME_ROTATION_VECTOR = 0x08
         SENSOR_REPORTID_ROTATION_VECTOR = 0x05
         if (self.imu.getSensorEventID() == SENSOR_REPORTID_ROTATION_VECTOR or self.imu.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR):
